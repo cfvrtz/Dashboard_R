@@ -410,16 +410,23 @@ hist = df.groupby(["anio_mes","periodo_label"]).agg(
 solar_pm = df[df["hora_dia"].between(8,17)].groupby("anio_mes")["medida_kwh"].sum()/1000
 noche_pm = df[~df["hora_dia"].between(8,17)].groupby("anio_mes")["medida_kwh"].sum()/1000
 
-hist["Energía MWh"] = (hist["energia_kwh"]/1000).map("{:,.1f}".format)
-hist["Solar 08–17 MWh"] = hist["anio_mes"].map(solar_pm).map(lambda v: f"{v:,.1f}" if pd.notna(v) else "—")
-hist["Noche 18–07 MWh"] = hist["anio_mes"].map(noche_pm).map(lambda v: f"{v:,.1f}" if pd.notna(v) else "—")
-hist["Potencia Máx kW"] = hist["potencia_max_kw"].map("{:,.2f}".format)
+# ── Nueva columna: potencia máx en hora punta (Abr–Sep, 18–22h) ──
+mes_col_full = (df["anio_mes"] % 100).astype(int)
+punta_mask   = mes_col_full.between(4, 9) & df["hora_dia"].between(18, 22)
+punta_max_pm = df[punta_mask].groupby("anio_mes")["medida_kwh"].max()
+
+hist["Energía MWh"]         = (hist["energia_kwh"]/1000).map("{:,.1f}".format)
+hist["Solar 08–17 MWh"]     = hist["anio_mes"].map(solar_pm).map(lambda v: f"{v:,.1f}" if pd.notna(v) else "—")
+hist["Noche 18–07 MWh"]     = hist["anio_mes"].map(noche_pm).map(lambda v: f"{v:,.1f}" if pd.notna(v) else "—")
+hist["Potencia Máx kW"]     = hist["potencia_max_kw"].map("{:,.2f}".format)
+hist["Pot. Máx Punta kW"]   = hist["anio_mes"].map(punta_max_pm).map(lambda v: f"{v:,.2f}" if pd.notna(v) else "—")
 
 st.dataframe(
-    hist[["periodo_label","Energía MWh","Solar 08–17 MWh","Noche 18–07 MWh","Potencia Máx kW"]]
+    hist[["periodo_label","Energía MWh","Solar 08–17 MWh","Noche 18–07 MWh","Potencia Máx kW","Pot. Máx Punta kW"]]
         .rename(columns={"periodo_label":"Período"}),
     use_container_width=True,
     hide_index=True
+
 )
 
 st.markdown("---")
