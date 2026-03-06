@@ -292,9 +292,9 @@ k1,k2,k3,k4,k5,k6 = st.columns(6)
 kpi(k1, "Energía Anual", f"{total_anual:.3f} GWh")
 kpi(k2, "Promedio Mensual", f"{promedio_mes:,.0f} MWh")
 kpi(k3, "Menor Consumo", f"{min_mes['total_kwh']/1000:,.0f} MWh",
-    sub=min_mes['label'], sub2=f"Hora pico: {hora_pico_min:02d}:00 h")
+    sub=min_mes['label'], sub2=f"Hora: {hora_pico_min:02d}:00 h")
 kpi(k4, "Mayor Consumo", f"{max_mes['total_kwh']/1000:,.0f} MWh",
-    sub=max_mes['label'], sub2=f"Hora pico: {hora_pico_max:02d}:00 h")
+    sub=max_mes['label'], sub2=f"Hora: {hora_pico_max:02d}:00 h")
 kpi(k5, "Bloque Solar 08–17h", f"{pct_solar:.1f}%", sub=f"{solar_kwh/1_000_000:.2f} GWh")
 kpi(k6, "H. Punta Abr–Sep 18–22h", f"{punta_kwh/1_000_000:.3f} GWh",
     sub=f"{punta_pct:.1f}% del total", acento=True)
