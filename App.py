@@ -10,7 +10,7 @@ import tempfile
 # =============================================================================
 # CONFIG
 # =============================================================================
-DATA_URL = "https://github.com/cfvergaraortiz/dashboard-retiros/releases/download/v1.0/retiros_base_2601.parquet"
+DATA_URL = "https://github.com/cfvrtz/Dashboard_R/releases/download/v1.0/retiros_base_2601.parquet"
 
 # ─────────────────────────────────────────────
 # PALETA
