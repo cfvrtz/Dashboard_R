@@ -10,7 +10,7 @@ import tempfile
 # =============================================================================
 # CONFIG
 # =============================================================================
-DATA_URL = "https://github.com/cfvrtz/Dashboard_R/releases/download/v1.0/retiros_base_2601.parquet"
+DATA_URL = "https://github.com/cfvergaraortiz/dashboard-retiros/releases/download/v1.0/retiros_base_2601.parquet"
 
 # ─────────────────────────────────────────────
 # PALETA
@@ -29,14 +29,17 @@ TIPO_COLORS = {
     "Feriado":         ACENTO,
 }
 
-DIAS_SEMANA_LABEL = {0:"Lunes",1:"Martes",2:"Miércoles",3:"Jueves",4:"Viernes",5:"Sábado",6:"Domingo"}
+DIAS_SEMANA_LABEL = {
+    0: "Lunes", 1: "Martes", 2: "Miércoles", 3: "Jueves",
+    4: "Viernes", 5: "Sábado", 6: "Domingo"
+}
 DIAS_SEMANA_COLORS = ["#009FE3","#FCDB00","#e67e22","#e74c3c","#8e44ad","#1abc9c","#2c3e50"]
 
 TIPO_ORDER = ["Lunes a Viernes", "Sábado", "Domingo", "Feriado"]
 DIA_ORDER  = ["Lunes","Martes","Miércoles","Jueves","Viernes","Sábado","Domingo"]
 
 # =============================================================================
-# HOLIDAYS CL (con fallback si no existe la librería)
+# HOLIDAYS CL
 # =============================================================================
 def _build_cl_holidays():
     import datetime as _dt
@@ -49,9 +52,10 @@ def _build_cl_holidays():
     except Exception:
         pass
 
-    # Feriados fijos (fallback)
-    fixed = [(1,1),(5,1),(5,21),(6,29),(7,16),(8,15),
-             (9,18),(9,19),(10,12),(10,31),(11,1),(12,8),(12,25)]
+    fixed = [
+        (1,1),(5,1),(5,21),(6,29),(7,16),(8,15),
+        (9,18),(9,19),(10,12),(10,31),(11,1),(12,8),(12,25)
+    ]
     result = set()
     for yr in range(2018, 2031):
         for m, d in fixed:
@@ -68,18 +72,23 @@ CL_HOLIDAYS = _build_cl_holidays()
 # =============================================================================
 def periodo_label(ym):
     meses = ["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"]
-    y, m = divmod(int(ym), 100)
-    return f"{meses[m-1]} {y}"
+    ym = int(ym)
+    yy = ym // 100
+    mm = ym % 100
+    yyyy = 2000 + yy
+    return f"{meses[mm-1]} {yyyy}"
 
 def kpi(col, label, value, sub="", sub2="", acento=False):
     cls = "kpi-card acento" if acento else "kpi-card"
     sub2_html = f'<div class="kpi-sub2">{sub2}</div>' if sub2 else ""
-    col.markdown(f"""<div class="{cls}">
+    col.markdown(f"""
+    <div class="{cls}">
         <div class="kpi-label">{label}</div>
         <div class="kpi-value">{value}</div>
         <div class="kpi-sub">{sub}</div>
         {sub2_html}
-    </div>""", unsafe_allow_html=True)
+    </div>
+    """, unsafe_allow_html=True)
 
 # =============================================================================
 # DOWNLOAD / LOAD
@@ -112,56 +121,64 @@ def get_claves(path, retiro):
 
 @st.cache_data(show_spinner="Cargando datos del retiro…")
 def load_filtered(path, retiro, clave):
-    t = pq.read_table(path, filters=[("retiro","=",retiro),("clave","=",clave)])
+    columnas = [
+        "anio_mes", "hora_mensual", "barra", "suministrador",
+        "retiro", "clave", "tipo", "medida_kwh"
+    ]
+    t = pq.read_table(
+        path,
+        columns=columnas,
+        filters=[("retiro","=",retiro),("clave","=",clave)]
+    )
     df = t.to_pandas()
 
     if df.empty:
         return df
 
-    # Limpieza base
-    if "medida_kwh" in df.columns:
-        df["medida_kwh"] = pd.to_numeric(df["medida_kwh"], errors="coerce").abs().fillna(0)
-
+    df["medida_kwh"] = pd.to_numeric(df["medida_kwh"], errors="coerce").abs().fillna(0)
     df["hora_mensual"] = pd.to_numeric(df["hora_mensual"], errors="coerce")
-    df["anio_mes"]     = pd.to_numeric(df["anio_mes"], errors="coerce")
+    df["anio_mes"] = pd.to_numeric(df["anio_mes"], errors="coerce")
 
-    # Derivadas simples
-    df["hora_dia"] = (df["hora_mensual"] - 1) % 24
-    df["mes"]      = (df["anio_mes"] % 100).astype("Int64")
+    # anio_mes viene como YYMM, ej: 2601 = ene-2026
+    yy = (df["anio_mes"] // 100).astype("Int64")
+    mm = (df["anio_mes"] % 100).astype("Int64")
+    yyyy = 2000 + yy
+
+    df["mes"] = mm
     df["semestre"] = df["mes"].apply(lambda m: "Oct–Mar" if m in [10,11,12,1,2,3] else "Abr–Sep")
     df["periodo_label"] = df["anio_mes"].apply(periodo_label)
+    df["hora_dia"] = ((df["hora_mensual"] - 1) % 24).astype("Int64")
 
-    # ── FECHA ROBUSTA (FIX del error) ────────────────────────────────────────
-    # Construye: base = YYYYMM01 y suma (hora_mensual-1) horas.
-    # Filtra horas fuera del mes (si la base viene "padded" a 744 siempre, etc.)
-    anio_mes = df["anio_mes"].astype("Int64")
-    hora_m   = df["hora_mensual"].astype("Int64")
+    # Fecha robusta
+    base = pd.to_datetime(
+        {
+            "year": yyyy,
+            "month": mm,
+            "day": 1
+        },
+        errors="coerce"
+    )
 
-    base = pd.to_datetime(anio_mes.astype(str) + "01", format="%Y%m%d", errors="coerce")
     max_horas_mes = base.dt.days_in_month * 24
 
     valid = (
         base.notna() &
-        hora_m.notna() &
-        (hora_m >= 1) &
-        (hora_m <= max_horas_mes)
+        df["hora_mensual"].notna() &
+        (df["hora_mensual"] >= 1) &
+        (df["hora_mensual"] <= max_horas_mes)
     )
 
-    # OJO: si tenías padding, acá se descartan filas inválidas.
     df = df.loc[valid].copy()
     base = base.loc[valid]
-    hora_m = hora_m.loc[valid]
 
-    df["fecha_hora"] = base + pd.to_timedelta(hora_m - 1, unit="h")
+    df["fecha_hora"] = base + pd.to_timedelta(df["hora_mensual"] - 1, unit="h")
     df["fecha"] = df["fecha_hora"].dt.normalize()
     df["dia_del_mes"] = df["fecha_hora"].dt.day
-
     df["dia_semana"] = df["fecha_hora"].dt.dayofweek
     df["dia_semana_label"] = df["dia_semana"].map(DIAS_SEMANA_LABEL)
 
     es_feriado = df["fecha_hora"].dt.date.isin(CL_HOLIDAYS)
 
-    # Vectorizado (rápido)
     df["tipo_detallado"] = np.select(
         [es_feriado, df["dia_semana"].eq(5), df["dia_semana"].eq(6)],
         ["Feriado", "Sábado", "Domingo"],
@@ -216,32 +233,28 @@ st.markdown(f"""
 </style>
 """, unsafe_allow_html=True)
 
-# ─── Descargar ───
 try:
     parquet_path = get_parquet_path()
 except Exception as e:
     st.error(f"Error al descargar el archivo: {e}")
     st.stop()
 
-# ─── Sidebar ───
 with st.sidebar:
     st.markdown("### ⚡ Dashboard Retiros")
     st.markdown("---")
-    retiros    = get_retiros(parquet_path)
+    retiros = get_retiros(parquet_path)
     sel_retiro = st.selectbox("Retiro", retiros)
-    claves     = get_claves(parquet_path, sel_retiro)
-    sel_clave  = st.selectbox("Clave", claves)
+    claves = get_claves(parquet_path, sel_retiro)
+    sel_clave = st.selectbox("Clave", claves)
     st.markdown("---")
     st.caption(f"📦 {len(retiros):,} retiros disponibles")
 
-# ─── Datos filtrados ───
 df = load_filtered(parquet_path, sel_retiro, sel_clave)
 
 if df.empty:
-    st.warning("No hay datos para esta selección (o se descartaron todas las horas inválidas del mes).")
+    st.warning("No hay datos para esta selección.")
     st.stop()
 
-# ─── Header ───
 barra_val = df["barra"].iloc[0] if "barra" in df.columns else "—"
 suministradores = df["suministrador"].dropna().unique().tolist() if "suministrador" in df.columns else []
 sum_str = " &nbsp;·&nbsp; ".join(f"<b>{s}</b>" for s in sorted(suministradores))
@@ -255,9 +268,6 @@ st.markdown(f"""
   </p>
 </div>""", unsafe_allow_html=True)
 
-# =============================================================================
-# KPIs
-# =============================================================================
 mensual = df.groupby(["anio_mes","periodo_label"])["medida_kwh"].sum().reset_index()
 mensual.columns = ["ym","label","total_kwh"]
 mensual["total_mwh"] = mensual["total_kwh"] / 1000
@@ -271,39 +281,38 @@ hora_pico_max = int(df[df["anio_mes"]==max_mes["ym"]].groupby("hora_dia")["medid
 hora_pico_min = int(df[df["anio_mes"]==min_mes["ym"]].groupby("hora_dia")["medida_kwh"].mean().idxmax())
 
 solar_kwh = df[df["hora_dia"].between(8,17)]["medida_kwh"].sum()
-pct_solar  = solar_kwh / df["medida_kwh"].sum() * 100 if df["medida_kwh"].sum() > 0 else 0
+pct_solar = solar_kwh / df["medida_kwh"].sum() * 100 if df["medida_kwh"].sum() > 0 else 0
 
-mes_col    = (df["anio_mes"] % 100).astype(int)
+mes_col = (df["anio_mes"] % 100).astype(int)
 punta_mask = mes_col.between(4,9) & df["hora_dia"].between(18,22)
-punta_kwh  = df[punta_mask]["medida_kwh"].sum()
-punta_pct  = punta_kwh / df["medida_kwh"].sum() * 100 if df["medida_kwh"].sum() > 0 else 0
+punta_kwh = df[punta_mask]["medida_kwh"].sum()
+punta_pct = punta_kwh / df["medida_kwh"].sum() * 100 if df["medida_kwh"].sum() > 0 else 0
 
 k1,k2,k3,k4,k5,k6 = st.columns(6)
-kpi(k1, "Energía Anual",        f"{total_anual:.3f} GWh")
-kpi(k2, "Promedio Mensual",     f"{promedio_mes:,.0f} MWh")
-kpi(k3, "Menor Consumo",        f"{min_mes['total_kwh']/1000:,.0f} MWh",
+kpi(k1, "Energía Anual", f"{total_anual:.3f} GWh")
+kpi(k2, "Promedio Mensual", f"{promedio_mes:,.0f} MWh")
+kpi(k3, "Menor Consumo", f"{min_mes['total_kwh']/1000:,.0f} MWh",
     sub=min_mes['label'], sub2=f"Hora pico: {hora_pico_min:02d}:00 h")
-kpi(k4, "Mayor Consumo",        f"{max_mes['total_kwh']/1000:,.0f} MWh",
+kpi(k4, "Mayor Consumo", f"{max_mes['total_kwh']/1000:,.0f} MWh",
     sub=max_mes['label'], sub2=f"Hora pico: {hora_pico_max:02d}:00 h")
-kpi(k5, "Bloque Solar 08–17h",  f"{pct_solar:.1f}%", sub=f"{solar_kwh/1_000_000:.2f} GWh")
+kpi(k5, "Bloque Solar 08–17h", f"{pct_solar:.1f}%", sub=f"{solar_kwh/1_000_000:.2f} GWh")
 kpi(k6, "H. Punta Abr–Sep 18–22h", f"{punta_kwh/1_000_000:.3f} GWh",
     sub=f"{punta_pct:.1f}% del total", acento=True)
 
-# =============================================================================
-# Consumo Mensual
-# =============================================================================
 st.markdown('<div class="section-title">Consumo Mensual</div>', unsafe_allow_html=True)
 
 mensual_sum = df.groupby(["anio_mes","periodo_label","suministrador"])["medida_kwh"].sum().reset_index()
 mensual_sum["total_mwh"] = mensual_sum["medida_kwh"] / 1000
-sums_list   = sorted(mensual_sum["suministrador"].dropna().unique())
+sums_list = sorted(mensual_sum["suministrador"].dropna().unique())
 colores_sum = px.colors.qualitative.Set2
 
 fig_bar = go.Figure()
 for i, s in enumerate(sums_list):
-    d = mensual_sum[mensual_sum["suministrador"]==s].sort_values("anio_mes")
+    d = mensual_sum[mensual_sum["suministrador"] == s].sort_values("anio_mes")
     fig_bar.add_trace(go.Bar(
-        x=d["periodo_label"], y=d["total_mwh"], name=s,
+        x=d["periodo_label"],
+        y=d["total_mwh"],
+        name=s,
         marker_color=colores_sum[i % len(colores_sum)],
         hovertemplate="%{x}<br>" + s + ": %{y:,.0f} MWh<extra></extra>",
     ))
@@ -324,30 +333,28 @@ for _, row in mensual.iterrows():
 
 st.plotly_chart(fig_bar, use_container_width=True)
 
-# =============================================================================
-# Curvas por semestre (4 tipos de día)
-# =============================================================================
-st.markdown('<div class="section-title">Curvas de Consumo por Hora y Tipo de Día</div>',
-            unsafe_allow_html=True)
+st.markdown('<div class="section-title">Curvas de Consumo por Hora y Tipo de Día</div>', unsafe_allow_html=True)
 
 col_oct, col_abr = st.columns(2)
-for col_ui, sem in [(col_oct,"Oct–Mar"),(col_abr,"Abr–Sep")]:
+for col_ui, sem in [(col_oct,"Oct–Mar"), (col_abr,"Abr–Sep")]:
     df_sem = df[df["semestre"] == sem]
     if df_sem.empty:
         col_ui.info(f"Sin datos para {sem}")
         continue
 
     curva = df_sem.groupby(["hora_dia","tipo_detallado"])["medida_kwh"].mean().reset_index()
-    top   = curva["medida_kwh"].max() or 1
+    top = curva["medida_kwh"].max() or 1
 
     fig_c = go.Figure()
     for tipo in TIPO_ORDER:
-        d = curva[curva["tipo_detallado"]==tipo].sort_values("hora_dia")
+        d = curva[curva["tipo_detallado"] == tipo].sort_values("hora_dia")
         if d.empty:
             continue
         fig_c.add_trace(go.Scatter(
-            x=d["hora_dia"], y=d["medida_kwh"]/top*100,
-            mode="lines", name=tipo,
+            x=d["hora_dia"],
+            y=d["medida_kwh"]/top*100,
+            mode="lines",
+            name=tipo,
             line=dict(color=TIPO_COLORS[tipo], width=2.5),
             hovertemplate="%{x}h: %{y:.1f}%<extra>" + tipo + "</extra>",
         ))
@@ -363,23 +370,21 @@ for col_ui, sem in [(col_oct,"Oct–Mar"),(col_abr,"Abr–Sep")]:
     )
     col_ui.plotly_chart(fig_c, use_container_width=True)
 
-# =============================================================================
-# Consumo Promedio por Día de Semana
-# =============================================================================
-st.markdown('<div class="section-title">Consumo Promedio por Hora y Día de la Semana [kWh]</div>',
-            unsafe_allow_html=True)
+st.markdown('<div class="section-title">Consumo Promedio por Hora y Día de la Semana [kWh]</div>', unsafe_allow_html=True)
 
 diario = df.groupby(["hora_dia","dia_semana_label"])["medida_kwh"].mean().reset_index()
 
 fig_d = go.Figure()
 for i, dia in enumerate(DIA_ORDER):
-    d = diario[diario["dia_semana_label"]==dia].sort_values("hora_dia")
+    d = diario[diario["dia_semana_label"] == dia].sort_values("hora_dia")
     if d.empty:
         continue
     dash = "dot" if dia in ["Sábado","Domingo"] else "solid"
     fig_d.add_trace(go.Scatter(
-        x=d["hora_dia"], y=d["medida_kwh"],
-        mode="lines+markers", name=dia,
+        x=d["hora_dia"],
+        y=d["medida_kwh"],
+        mode="lines+markers",
+        name=dia,
         line=dict(color=DIAS_SEMANA_COLORS[i], width=2.2, dash=dash),
         marker=dict(size=4),
         hovertemplate="%{x}h: %{y:,.1f} kWh<extra>" + dia + "</extra>",
@@ -395,20 +400,17 @@ fig_d.update_layout(
 )
 st.plotly_chart(fig_d, use_container_width=True)
 
-# =============================================================================
-# Tabla histórico
-# =============================================================================
 st.markdown('<div class="section-title">Histórico por Período</div>', unsafe_allow_html=True)
 
 hist = df.groupby(["anio_mes","periodo_label"]).agg(
-    energia_kwh    =("medida_kwh","sum"),
+    energia_kwh=("medida_kwh","sum"),
     potencia_max_kw=("medida_kwh","max"),
 ).reset_index().sort_values("anio_mes", ascending=False)
 
 solar_pm = df[df["hora_dia"].between(8,17)].groupby("anio_mes")["medida_kwh"].sum()/1000
 noche_pm = df[~df["hora_dia"].between(8,17)].groupby("anio_mes")["medida_kwh"].sum()/1000
 
-hist["Energía MWh"]     = (hist["energia_kwh"]/1000).map("{:,.1f}".format)
+hist["Energía MWh"] = (hist["energia_kwh"]/1000).map("{:,.1f}".format)
 hist["Solar 08–17 MWh"] = hist["anio_mes"].map(solar_pm).map(lambda v: f"{v:,.1f}" if pd.notna(v) else "—")
 hist["Noche 18–07 MWh"] = hist["anio_mes"].map(noche_pm).map(lambda v: f"{v:,.1f}" if pd.notna(v) else "—")
 hist["Potencia Máx kW"] = hist["potencia_max_kw"].map("{:,.2f}".format)
@@ -416,7 +418,8 @@ hist["Potencia Máx kW"] = hist["potencia_max_kw"].map("{:,.2f}".format)
 st.dataframe(
     hist[["periodo_label","Energía MWh","Solar 08–17 MWh","Noche 18–07 MWh","Potencia Máx kW"]]
         .rename(columns={"periodo_label":"Período"}),
-    use_container_width=True, hide_index=True
+    use_container_width=True,
+    hide_index=True
 )
 
 st.markdown("---")
